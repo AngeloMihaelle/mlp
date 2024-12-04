@@ -1,7 +1,3 @@
-Here’s a README file for the neural network implementation:
-
----
-
 # Neural Network Implementation
 
 This repository contains a basic implementation of a neural network from scratch using NumPy, with forward and backward propagation, loss calculation, and performance metrics such as confusion matrix and classification report.
@@ -112,6 +108,3 @@ evaluator.print_report()
 
 This code is licensed under the GNU General Public License v2. - see the [LICENSE](LICENSE) file for details.
 
----
-
-This README provides a comprehensive guide to understand the purpose, features, and usage of the neural network code you’ve written. It also includes an example to show how to use the neural network class and evaluate its performance with the `test_nn` class.
