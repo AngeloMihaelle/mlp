@@ -2,11 +2,17 @@ import numpy as np
 import time
 import json
 from tabulate import tabulate
+
+
 class NeuralNetwork:
     def __init__(self, activations, learning_rate=0.001):
         """
-        activations: List of tuples [(#neurons, "activation")]
-        Example: [(2, "relu"), (4, "tanh"), (6, "tanh"), (4, "tanh"), (1, "output")]
+        Initializes the neural network with given activation layers and learning rate.
+        
+        Parameters:
+        activations (list of tuples): Each tuple contains (#neurons, "activation") for each layer.
+                                       Example: [(2, "relu"), (4, "tanh"), (6, "tanh"), (4, "tanh"), (1, "output")]
+        learning_rate (float): The learning rate for weight updates. Default is 0.001.
         """
         self.activations = activations
         self.learning_rate = learning_rate
@@ -17,72 +23,128 @@ class NeuralNetwork:
             "sigmoid": (self.sigmoid, self.sigmoid_derivative),
             "relu": (self.relu, self.relu_derivative),
             "tanh": (self.tanh, self.tanh_derivative),
-            "output": (self.sigmoid, self.sigmoid_derivative)  # Default for output
+            "softmax": (self.softmax, self.softmax_derivative),
+            "output": (self.softmax, self.softmax_derivative)  # Use softmax for the output layer in multi-class classification
         }
 
     def sigmoid(self, x):
+        """Sigmoid activation function."""
         return 1 / (1 + np.exp(-x))
 
     def sigmoid_derivative(self, x):
+        """Derivative of the sigmoid activation function."""
         return x * (1 - x)
 
     def relu(self, x):
+        """ReLU activation function."""
         return np.maximum(0, x)
 
     def relu_derivative(self, x):
+        """Derivative of the ReLU activation function."""
         return np.where(x > 0, 1, 0)
 
     def tanh(self, x):
+        """Tanh activation function."""
         return np.tanh(x)
 
     def tanh_derivative(self, x):
+        """Derivative of the tanh activation function."""
         return 1 - np.tanh(x) ** 2
 
-    def binary_crossentropy(self, y_true, y_pred):
+    def softmax(self, x):
+        """Softmax activation function."""
+        exp_values = np.exp(x - np.max(x, axis=-1, keepdims=True))  # Stability trick to prevent overflow
+        return exp_values / np.sum(exp_values, axis=-1, keepdims=True)
+
+    def softmax_derivative(self, output, true_labels):
+        """
+        Computes the derivative of the softmax function in a manner appropriate for backpropagation.
+
+        Parameters:
+        output (ndarray): The output of the softmax function (predicted probabilities).
+        true_labels (ndarray): The true labels (one-hot encoded).
+
+        Returns:
+        ndarray: The gradient of the softmax output with respect to the loss.
+        """
+        # Gradient for softmax in multi-class classification is:
+        # delta = softmax(output) - true_labels
+        return output - true_labels
+
+
+    def categorical_crossentropy(self, y_true, y_pred):
+        """
+        Categorical Cross-Entropy Loss function.
+        
+        Parameters:
+        y_true (ndarray): True labels (one-hot encoded).
+        y_pred (ndarray): Predicted probabilities.
+
+        Returns:
+        float: The computed categorical cross-entropy loss.
+        """
         epsilon = 1e-15
-        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
-        return -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
+        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)  # Prevent log(0)
+        return -np.mean(np.sum(y_true * np.log(y_pred), axis=-1))
 
     def initialize_weights(self):
+        """
+        Initializes weights and biases for each layer in the network using the Xavier initialization.
+
+        Returns:
+        tuple: A tuple containing weights and biases for all layers.
+        """
         weights = []
         biases = []
         for i in range(len(self.layers) - 1):
-            input_size = self.layers[i]    # Current layer size
-            output_size = self.layers[i + 1]  # Next layer size
-            limit = np.sqrt(6 / (input_size + output_size))
+            input_size = self.layers[i]
+            output_size = self.layers[i + 1]
+            limit = np.sqrt(6 / (input_size + output_size))  # Xavier initialization limit
             weights.append(np.random.uniform(-limit, limit, (input_size, output_size)))
             biases.append(np.zeros((1, output_size)))
         return weights, biases
 
     def forward_propagation(self, X):
-        activations = [X]  # The activations list starts with the input
+        """
+        Performs forward propagation through the network.
+
+        Parameters:
+        X (ndarray): Input data.
+
+        Returns:
+        list: A list of activations for each layer.
+        """
+        activations = [X]
         for i in range(len(self.weights)):
             z = np.dot(activations[-1], self.weights[i]) + self.biases[i]
-            # Get activation function for current layer
             activation_func_name = self.activation_types[i + 1]
             func, _ = self.activation_functions[activation_func_name]
-            activations.append(func(z))  # Apply activation function to z
+            activations.append(func(z))
         return activations
-
     def backpropagation(self, X, y):
-        m = X.shape[0]
+        """
+        Performs backpropagation to compute gradients and update weights and biases.
+
+        Parameters:
+        X (ndarray): Input data.
+        y (ndarray): True labels (one-hot encoded).
+        """
+        m = X.shape[0]  # Number of training examples
         activations = self.forward_propagation(X)
 
-        # Calculate the output error and delta for output layer
+        # Output layer error and delta
         output_error = y - activations[-1]
-        _, output_derivative = self.activation_functions[self.activation_types[-1]]
-        delta = output_error * output_derivative(activations[-1])
+        delta = self.softmax_derivative(activations[-1], y)  # Use both activations and y
         deltas = [delta]
 
-        # Backpropagate for each hidden layer
+        # Backpropagate for hidden layers
         for i in range(len(self.weights) - 2, -1, -1):
             _, derivative_func = self.activation_functions[self.activation_types[i + 1]]
-            delta = np.dot(deltas[-1], self.weights[i + 1].T) * \
-                derivative_func(activations[i + 1])
+            delta = np.dot(deltas[-1], self.weights[i + 1].T) * derivative_func(activations[i + 1])
             deltas.append(delta)
         deltas.reverse()
 
-        # Update weights and biases
+        # Update weights and biases using gradient descent
         for i in range(len(self.weights)):
             gradient_w = np.dot(activations[i].T, deltas[i]) / m
             gradient_b = np.sum(deltas[i], axis=0, keepdims=True) / m
@@ -90,29 +152,55 @@ class NeuralNetwork:
             self.biases[i] += self.learning_rate * gradient_b
 
     def train(self, X, y, epochs=10000, timing=False):
+        """
+        Trains the neural network for a given number of epochs.
+
+        Parameters:
+        X (ndarray): Input data.
+        y (ndarray): True labels.
+        epochs (int): Number of training epochs. Default is 10000.
+        timing (bool): If True, prints the time taken for each epoch.
+        """
         total_time = 0
         for epoch in range(epochs):
             if timing:
-                start_time_epoch = time.perf_counter()  # Use perf_counter for higher precision
+                start_time_epoch = time.perf_counter()  # High precision timer
             self.backpropagation(X, y)
-            if True:
-                output = self.forward_propagation(X)[-1]
-                current_loss = self.binary_crossentropy(y, output)
-                if timing:
-                    end_time_epoch = time.perf_counter()  # Use perf_counter for higher precision
-                    elapsed_time_epoch = end_time_epoch - start_time_epoch
-                    print(f"Epoch {epoch}, Loss: {current_loss}, Time: {self.format_elapsed_time(elapsed_time_epoch)}")
-                    total_time += elapsed_time_epoch
-                else:
-                    print(f"Epoch {epoch}, Loss: {current_loss}")
+            output = self.forward_propagation(X)[-1]
+            current_loss = self.categorical_crossentropy(y, output)
+            if timing:
+                end_time_epoch = time.perf_counter()  # High precision timer
+                elapsed_time_epoch = end_time_epoch - start_time_epoch
+                print(f"Epoch {epoch}, Loss: {current_loss}, Time: {self.format_elapsed_time(elapsed_time_epoch)}")
+                total_time += elapsed_time_epoch
+            else:
+                print(f"Epoch {epoch}, Loss: {current_loss}")
         if timing:
             print(f"Total time: {self.format_elapsed_time(total_time)}")
 
     def predict(self, X):
+        """
+        Predicts the output for the given input data.
+
+        Parameters:
+        X (ndarray): Input data.
+
+        Returns:
+        ndarray: The predicted output.
+        """
         return self.forward_propagation(X)[-1]
 
     @staticmethod
     def format_elapsed_time(elapsed):
+        """
+        Formats the elapsed time in a human-readable format.
+
+        Parameters:
+        elapsed (float): The elapsed time in seconds.
+
+        Returns:
+        str: The formatted elapsed time.
+        """
         if elapsed >= 3600:
             hours = int(elapsed // 3600)
             minutes = int((elapsed % 3600) // 60)
